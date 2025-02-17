@@ -1,12 +1,12 @@
 {
-  "name": "videonotes",
+  "name": "videonote",
   "version": "1.0.0",
   "private": true,
-  "workspaces": [
-    "frontend",
-    "backend"
-  ],
   "scripts": {
-    "build": "cd frontend && npm install && npm run build"
+    "build": "cd frontend && npm install && npm run build",
+    "install-deps": "npm install && cd frontend && npm install && cd ../backend && npm install"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
   }
 } 

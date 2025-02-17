@@ -1,22 +1,16 @@
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const OpenAI = require('openai');
-require('dotenv').config();
+import { OpenAI } from 'openai';
+import multer from 'multer';
+import { promisify } from 'util';
 
-// Initialize OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Configure multer for memory storage (for Vercel)
+// Configure multer for memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
   fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().slice(1);
-    const allowedExtensions = new Set(['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm']);
-    if (allowedExtensions.has(ext)) {
+    const allowedTypes = new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'video/mp4', 'video/webm']);
+    if (allowedTypes.has(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Invalid file type'));
@@ -30,7 +24,6 @@ const generateGptPrompt = (businessDescription, participants, transcription) => 
     .join('\n');
 
   return `Please analyze this transcription and provide the response in the following JSON format:
-
 {
     "summary": "A professionally written bullet-point list of the key discussion points from the meeting. Each bullet point should be concise and clearly state the essential point.",
     "tasks": "A professionally written, structured bullet-point list of action items assigned to each participant. Include the name of the partisipant and their respective tasks. Keep it clear and actionable.",
@@ -56,39 +49,21 @@ Constraints:
 - The summary, tasks, and timecodes should each be contained in a single string, with line breaks between bullet points if desired.`;
 };
 
-// Create Express app for local development
-const app = express();
+// Promisify multer middleware
+const multerPromise = promisify(upload.single('file'));
 
-// CORS middleware for local development
-if (process.env.NODE_ENV !== 'production') {
-  app.use(cors({
-    origin: 'http://localhost:3000',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    credentials: true
-  }));
-}
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-// Main processing function
-const handler = async (req, res) => {
   try {
-    // For Vercel, we need to handle the file upload differently
-    const uploadMiddleware = upload.single('file');
+    // Handle file upload
+    await multerPromise(req, res);
     
-    await new Promise((resolve, reject) => {
-      uploadMiddleware(req, res, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file provided' });
-    }
-
     const { title, business_description, participants } = req.body;
     
-    if (!title || !business_description || !participants) {
+    if (!req.file || !title || !business_description || !participants) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -99,20 +74,11 @@ const handler = async (req, res) => {
       return res.status(400).json({ error: 'Invalid participants format' });
     }
 
-    // Create a temporary file for Whisper API
-    const buffer = req.file.buffer;
-    const tempFilePath = `/tmp/${Date.now()}-${req.file.originalname}`;
-    fs.writeFileSync(tempFilePath, buffer);
-
     // Process with Whisper
     const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(tempFilePath),
+      file: req.file.buffer,
       model: "whisper-1",
-      language: "ru"
     });
-
-    // Clean up temp file
-    fs.unlinkSync(tempFilePath);
 
     // Generate GPT prompt and get response
     const prompt = generateGptPrompt(
@@ -135,7 +101,6 @@ const handler = async (req, res) => {
       gptOutput = JSON.parse(gptResponse.choices[0].message.content);
     } catch (e) {
       console.error('Error parsing GPT response:', e);
-      console.error('Raw GPT response:', gptResponse.choices[0].message.content);
       gptOutput = {
         summary: "Could not generate summary due to processing error.",
         tasks: "Could not generate tasks due to processing error.",
@@ -143,7 +108,7 @@ const handler = async (req, res) => {
       };
     }
 
-    return res.json({
+    return res.status(200).json({
       whisper_output: { text: transcription.text },
       gpt_output: gptOutput
     });
@@ -151,18 +116,7 @@ const handler = async (req, res) => {
   } catch (error) {
     console.error('Error processing request:', error);
     return res.status(500).json({
-      error: 'An error occurred while processing your request. Please try again.'
+      error: error.message || 'An error occurred while processing your request'
     });
   }
-};
-
-// For local development
-if (process.env.NODE_ENV !== 'production') {
-  app.post('/api/process-meeting', handler);
-  app.listen(process.env.PORT || 5002, () => {
-    console.log(`Server running on port ${process.env.PORT || 5002}`);
-  });
-}
-
-// Export for Vercel
-module.exports = handler; 
+} 
