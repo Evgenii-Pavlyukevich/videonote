@@ -42,12 +42,29 @@ function App() {
         method: 'POST',
         body: formData,
         headers: {
-          'Accept': 'application/json',
+          'Accept': 'application/json'
         }
       });
 
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server error response:', errorText);
+        let errorMessage = 'Ошибка сервера';
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error?.message || errorData.error || errorMessage;
+        } catch (e) {
+          console.error('Failed to parse error response:', e);
+        }
+        throw new Error(errorMessage);
+      }
+
       const responseText = await response.text();
       console.log('Raw response:', responseText);
+
+      if (!responseText) {
+        throw new Error('Пустой ответ от сервера');
+      }
 
       let data;
       try {
@@ -55,13 +72,6 @@ function App() {
       } catch (e) {
         console.error('Failed to parse response:', e);
         throw new Error('Ошибка сервера: неверный формат ответа');
-      }
-
-      if (!response.ok) {
-        console.error('Server error response:', data);
-        throw new Error(
-          data.error?.message || data.error || 'Ошибка сервера'
-        );
       }
 
       console.log('Response data:', data);
