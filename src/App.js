@@ -33,26 +33,33 @@ function App() {
       
       formData.append('participants', JSON.stringify(participantsArray));
 
+      console.log('Sending request to:', '/api/process-meeting');
       const response = await fetch('/api/process-meeting', {
         method: 'POST',
         body: formData,
         headers: {
           'Accept': 'application/json',
-        },
-        mode: 'cors',
+        }
       });
 
+      const responseText = await response.text();
+      console.log('Raw response:', responseText);
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error('Failed to parse response:', e);
+        throw new Error('Ошибка сервера: неверный формат ответа');
+      }
+
       if (!response.ok) {
-        const errorData = await response.text();
-        console.error('Server response:', errorData);
+        console.error('Server error response:', data);
         throw new Error(
-          errorData.startsWith('{') 
-            ? JSON.parse(errorData).error 
-            : 'Ошибка сервера'
+          data.error?.message || data.error || 'Ошибка сервера'
         );
       }
 
-      const data = await response.json();
       console.log('Response data:', data);
       setResults(data);
     } catch (error) {

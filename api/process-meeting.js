@@ -35,51 +35,59 @@ Transcription:
 ${transcription}`;
 };
 
-const parseMultipartForm = async (req) => {
+function parseMultipartForm(req) {
   return new Promise((resolve, reject) => {
-    const fields = {};
-    let fileBuffer = null;
-    let fileName = '';
+    const data = {
+      fields: {},
+      file: null,
+      fileName: null
+    };
 
     const bb = busboy({ headers: req.headers });
 
     bb.on('file', (name, file, info) => {
-      fileName = info.filename;
+      console.log('Processing file:', info.filename);
       const chunks = [];
-      file.on('data', (data) => chunks.push(data));
+      data.fileName = info.filename;
+
+      file.on('data', (chunk) => chunks.push(chunk));
       file.on('end', () => {
-        fileBuffer = Buffer.concat(chunks);
+        data.file = Buffer.concat(chunks);
+        console.log('File processing complete');
       });
     });
 
     bb.on('field', (name, val) => {
-      fields[name] = val;
+      console.log('Processing field:', name);
+      data.fields[name] = val;
     });
 
-    bb.on('close', () => {
-      resolve({ fields, fileBuffer, fileName });
+    bb.on('finish', () => {
+      console.log('Form parsing complete');
+      resolve(data);
     });
 
-    bb.on('error', (err) => {
-      reject(err);
+    bb.on('error', (error) => {
+      console.error('Form parsing error:', error);
+      reject(new Error('Error parsing form data'));
     });
 
     req.pipe(bb);
   });
-};
+}
 
 module.exports = async (req, res) => {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(200, corsHeaders);
-    res.end();
+    res.status(200).end();
     return;
   }
-
-  // Add CORS headers to all responses
-  Object.entries(corsHeaders).forEach(([key, value]) => {
-    res.setHeader(key, value);
-  });
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -87,58 +95,76 @@ module.exports = async (req, res) => {
 
   try {
     console.log('Processing request...');
-    const { fields, fileBuffer, fileName } = await parseMultipartForm(req);
-    console.log('Form parsed:', { fields: Object.keys(fields), hasFile: !!fileBuffer });
+    const formData = await parseMultipartForm(req);
+    console.log('Form data parsed successfully');
 
-    if (!fileBuffer || !fields.title || !fields.business_description || !fields.participants) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!formData.file) {
+      throw new Error('No file uploaded');
     }
 
-    const participants = JSON.parse(fields.participants);
+    const { title, participants, business_description } = formData.fields;
+    
+    if (!title || !participants || !business_description) {
+      throw new Error('Missing required fields');
+    }
 
-    // Process with Whisper
-    console.log('Processing with Whisper...');
-    const transcription = await openai.audio.transcriptions.create({
+    console.log('Creating transcription with Whisper...');
+    const transcriptionResponse = await openai.audio.transcriptions.create({
       file: {
-        buffer: fileBuffer,
-        name: fileName || 'audio.mp3',
+        data: formData.file,
+        name: formData.fileName || 'audio.mp3'
       },
-      model: "whisper-1",
+      model: 'whisper-1',
     });
-    console.log('Transcription complete');
 
-    // Generate GPT prompt and get response
-    console.log('Generating GPT response...');
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: "You are a helpful assistant that always responds with valid JSON." },
-        { role: "user", content: generateGptPrompt(fields.business_description, participants, transcription.text) }
-      ],
-      temperature: 0.7
-    });
-    console.log('GPT response received');
-
-    let gptOutput;
-    try {
-      gptOutput = JSON.parse(gptResponse.choices[0].message.content);
-    } catch (e) {
-      console.error('Error parsing GPT response:', e);
-      gptOutput = {
-        summary: "Could not generate summary due to processing error.",
-        tasks: "Could not generate tasks due to processing error.",
-        timecodes: "Could not generate timecodes due to processing error."
-      };
+    if (!transcriptionResponse.text) {
+      throw new Error('Failed to transcribe audio');
     }
 
-    res.status(200).json({
-      whisper_output: { text: transcription.text },
-      gpt_output: gptOutput
+    console.log('Transcription complete, processing with GPT...');
+    const gptResponse = await openai.chat.completions.create({
+      model: 'gpt-4-1106-preview',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an AI assistant that helps analyze business meetings. 
+          The meeting title is: ${title}
+          The participants are: ${participants}
+          Business context: ${business_description}`
+        },
+        {
+          role: 'user',
+          content: `Please analyze this meeting transcript and provide:
+          1. A brief summary
+          2. Key decisions made
+          3. Action items with assigned responsibilities
+          4. Follow-up tasks
+          5. Important deadlines mentioned
+          
+          Transcript: ${transcriptionResponse.text}`
+        }
+      ],
+      temperature: 0.7,
     });
+
+    if (!gptResponse.choices?.[0]?.message?.content) {
+      throw new Error('Failed to analyze transcript');
+    }
+
+    console.log('Analysis complete, sending response');
+    return res.status(200).json({
+      whisper_output: transcriptionResponse.text,
+      gpt_output: gptResponse.choices[0].message.content
+    });
+
   } catch (error) {
     console.error('Error processing request:', error);
-    res.status(500).json({
-      error: error.message || 'An error occurred while processing your request.'
+    const statusCode = error.status || 500;
+    return res.status(statusCode).json({
+      error: {
+        message: error.message || 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }
     });
   }
 }; 
