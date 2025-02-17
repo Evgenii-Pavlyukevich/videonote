@@ -1,22 +1,14 @@
 import { OpenAI } from 'openai';
-import multer from 'multer';
-import { promisify } from 'util';
+import formidable from 'formidable';
+import { createReadStream } from 'fs';
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// Configure multer for memory storage
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'video/mp4', 'video/webm']);
-    if (allowedTypes.has(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type'));
-    }
-  }
-});
 
 const generateGptPrompt = (businessDescription, participants, transcription) => {
   const participantsStr = participants
@@ -40,17 +32,8 @@ Participants:
 ${participantsStr}
 
 Transcription:
-${transcription}
-
-Constraints:
-- Return ONLY valid JSON without any additional text or formatting.
-- The content of the JSON values should maintain a professional and concise tone.
-- Use bullet points within the strings by starting lines with a dash and a space ("- ") for clarity.
-- The summary, tasks, and timecodes should each be contained in a single string, with line breaks between bullet points if desired.`;
+${transcription}`;
 };
-
-// Promisify multer middleware
-const multerPromise = promisify(upload.single('file'));
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -58,40 +41,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Handle file upload
-    await multerPromise(req, res);
-    
-    const { title, business_description, participants } = req.body;
-    
-    if (!req.file || !title || !business_description || !participants) {
+    const form = formidable();
+    const [fields, files] = await new Promise((resolve, reject) => {
+      form.parse(req, (err, fields, files) => {
+        if (err) reject(err);
+        resolve([fields, files]);
+      });
+    });
+
+    if (!files.file || !fields.title || !fields.business_description || !fields.participants) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    let parsedParticipants;
-    try {
-      parsedParticipants = JSON.parse(participants);
-    } catch (e) {
-      return res.status(400).json({ error: 'Invalid participants format' });
-    }
+    const participants = JSON.parse(fields.participants);
 
     // Process with Whisper
     const transcription = await openai.audio.transcriptions.create({
-      file: req.file.buffer,
+      file: createReadStream(files.file[0].filepath),
       model: "whisper-1",
     });
 
     // Generate GPT prompt and get response
-    const prompt = generateGptPrompt(
-      business_description,
-      parsedParticipants,
-      transcription.text
-    );
-
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
         { role: "system", content: "You are a helpful assistant that always responds with valid JSON." },
-        { role: "user", content: prompt }
+        { role: "user", content: generateGptPrompt(fields.business_description, participants, transcription.text) }
       ],
       temperature: 0.7
     });
@@ -108,15 +83,14 @@ export default async function handler(req, res) {
       };
     }
 
-    return res.status(200).json({
+    res.status(200).json({
       whisper_output: { text: transcription.text },
       gpt_output: gptOutput
     });
-
   } catch (error) {
     console.error('Error processing request:', error);
-    return res.status(500).json({
-      error: error.message || 'An error occurred while processing your request'
+    res.status(500).json({
+      error: 'An error occurred while processing your request.'
     });
   }
 } 
