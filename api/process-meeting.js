@@ -1,12 +1,5 @@
-import { OpenAI } from 'openai';
-import formidable from 'formidable';
-import { createReadStream } from 'fs';
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+const { OpenAI } = require('openai');
+const busboy = require('busboy');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -35,21 +28,46 @@ Transcription:
 ${transcription}`;
 };
 
-export default async function handler(req, res) {
+const parseMultipartForm = async (req) => {
+  return new Promise((resolve, reject) => {
+    const fields = {};
+    let fileBuffer = null;
+
+    const bb = busboy({ headers: req.headers });
+
+    bb.on('file', (name, file, info) => {
+      const chunks = [];
+      file.on('data', (data) => chunks.push(data));
+      file.on('end', () => {
+        fileBuffer = Buffer.concat(chunks);
+      });
+    });
+
+    bb.on('field', (name, val) => {
+      fields[name] = val;
+    });
+
+    bb.on('close', () => {
+      resolve({ fields, fileBuffer });
+    });
+
+    bb.on('error', (err) => {
+      reject(err);
+    });
+
+    req.pipe(bb);
+  });
+};
+
+module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const form = formidable();
-    const [fields, files] = await new Promise((resolve, reject) => {
-      form.parse(req, (err, fields, files) => {
-        if (err) reject(err);
-        resolve([fields, files]);
-      });
-    });
+    const { fields, fileBuffer } = await parseMultipartForm(req);
 
-    if (!files.file || !fields.title || !fields.business_description || !fields.participants) {
+    if (!fileBuffer || !fields.title || !fields.business_description || !fields.participants) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -57,7 +75,10 @@ export default async function handler(req, res) {
 
     // Process with Whisper
     const transcription = await openai.audio.transcriptions.create({
-      file: createReadStream(files.file[0].filepath),
+      file: {
+        buffer: fileBuffer,
+        name: 'audio.mp3',
+      },
       model: "whisper-1",
     });
 
@@ -93,4 +114,4 @@ export default async function handler(req, res) {
       error: 'An error occurred while processing your request.'
     });
   }
-} 
+}; 

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "formidable": "^3.5.1",
+    "busboy": "^1.6.0",
     "openai": "^4.24.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
