@@ -60,17 +60,17 @@ Constraints:
 const app = express();
 
 // CORS middleware for local development
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? true 
-    : 'http://localhost:3000',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  credentials: true
-}));
+if (process.env.NODE_ENV !== 'production') {
+  app.use(cors({
+    origin: 'http://localhost:3000',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true
+  }));
+}
 
 // Main processing function
-async function processMeeting(req, res) {
+const handler = async (req, res) => {
   try {
     // For Vercel, we need to handle the file upload differently
     const uploadMiddleware = upload.single('file');
@@ -154,17 +154,15 @@ async function processMeeting(req, res) {
       error: 'An error occurred while processing your request. Please try again.'
     });
   }
-}
+};
 
 // For local development
 if (process.env.NODE_ENV !== 'production') {
-  app.post('/api/process-meeting', processMeeting);
+  app.post('/api/process-meeting', handler);
   app.listen(process.env.PORT || 5002, () => {
     console.log(`Server running on port ${process.env.PORT || 5002}`);
   });
 }
 
 // Export for Vercel
-module.exports = {
-  processMeeting
-}; 
+module.exports = handler; 

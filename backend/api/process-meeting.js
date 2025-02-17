@@ -1,4 +1,4 @@
-const { processMeeting } = require('../app');
+const handler = require('../app');
 
 module.exports = async (req, res) => {
   // Set CORS headers
@@ -18,7 +18,7 @@ module.exports = async (req, res) => {
 
   // Handle POST request
   if (req.method === 'POST') {
-    return processMeeting(req, res);
+    return handler(req, res);
   }
 
   // Handle unsupported methods
