@@ -12,6 +12,10 @@ function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const API_URL = process.env.NODE_ENV === 'development' 
+    ? 'http://localhost:3000/api/process-meeting'
+    : 'https://videonote-beta.vercel.app/api/process-meeting';
+
   const handleSubmit = async () => {
     if (!file || !title || !participants || !businessDescription) {
       alert('Пожалуйста, заполните все поля');
@@ -33,8 +37,8 @@ function App() {
       
       formData.append('participants', JSON.stringify(participantsArray));
 
-      console.log('Sending request to:', '/api/process-meeting');
-      const response = await fetch('/api/process-meeting', {
+      console.log('Sending request to:', API_URL);
+      const response = await fetch(API_URL, {
         method: 'POST',
         body: formData,
         headers: {
