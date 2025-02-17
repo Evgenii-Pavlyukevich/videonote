@@ -36,16 +36,23 @@ function App() {
       const response = await fetch('/api/process-meeting', {
         method: 'POST',
         body: formData,
+        headers: {
+          'Accept': 'application/json',
+        },
         mode: 'cors',
-        credentials: 'include'
       });
 
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.error || 'Ошибка сервера');
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(
+          errorData.startsWith('{') 
+            ? JSON.parse(errorData).error 
+            : 'Ошибка сервера'
+        );
       }
 
+      const data = await response.json();
       console.log('Response data:', data);
       setResults(data);
     } catch (error) {
